@@ -138,6 +138,70 @@ where rows are true healthy/diabetic classes and columns are predicted healthy/d
 
 The separate ECG notebook reports an alternative threshold analysis: a Youden threshold of 0.1919 gives 100\% diabetes recall and 56\% healthy recall on the same 26-session test partition, with overall accuracy 73\%. This illustrates that the operating threshold materially changes the clinical trade-off; threshold choice must therefore be fixed using an explicitly pre-registered objective and validated independently.
 
+
+\section{Formal experimental protocol}
+\subsection{Unit of analysis and labels}
+The unit of analysis is a synchronized recording session rather than an individual heartbeat or respiratory cycle. Each session inherits a binary label: $y=0$ for a healthy participant and $y=1$ for a participant with type 1 diabetes. This distinction is important because the 126 paired sessions are repeated observations from only 20 participants. The effective sample size for generalization is therefore closer to the number of independent subjects than to the number of rows in the feature tables.
+
+\begin{table}[H]
+\centering
+\caption{Dataset accounting reported by the feature-extraction notebook.}
+\label{tab:dataset}
+\begin{tabular}{lrrr}
+\toprule
+ & \textbf{Total} & \textbf{Healthy} & \textbf{Diabetic}\\
+\midrule
+ECG sessions discovered & 131 & 81 & 50\\
+Respiratory sessions discovered & 126 & 79 & 47\\
+Paired sessions & 126 & 79 & 47\\
+Training pairs & 100 & 63 & 37\\
+Held-out test pairs & 26 & 16 & 10\\
+Subjects & 20 & \multicolumn{2}{c}{label counts are not independently verified in raw data}\\
+Training subjects & 16 & \multicolumn{2}{c}{subject-disjoint from test}\\
+Test subjects & 4 & \multicolumn{2}{c}{subject-disjoint from training}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Preprocessing and estimands}
+For each modality, preprocessing parameters are conceptually estimated from the training partition and then applied to the test partition. The respiratory notebook explicitly fits its Min--Max scaler on training data only. The ECG filter is a fixed signal-processing operation. The primary estimands are accuracy, diabetic precision, diabetic recall (sensitivity), healthy specificity, balanced accuracy where reported, and ROC--AUC. Given class imbalance, balanced accuracy is defined as
+\begin{equation}
+  \mathrm{BA}=\frac{1}{2}\left(\frac{TP}{TP+FN}+\frac{TN}{TN+FP}\right).
+\end{equation}
+The repository uses threshold selection differently across notebooks: the ECG notebook reports a Youden-index threshold, whereas the fusion notebook uses a balanced-accuracy threshold for the respiratory model and a training out-of-fold objective for $\alpha$. These are valid exploratory choices, but a final study should predefine one threshold-selection protocol for every comparator.
+
+\subsection{Reproducibility matrix}
+\begin{table}[H]
+\centering
+\caption{What can and cannot be reproduced from the current checkout.}
+\label{tab:repro}
+\begin{tabular}{p{0.34\textwidth}p{0.21\textwidth}p{0.34\textwidth}}
+\toprule
+\textbf{Analysis component} & \textbf{Available locally?} & \textbf{Evidence or missing requirement}\\
+\midrule
+Feature-table inspection & Yes & Four CSV files are included with 100 training and 26 test rows per modality.\\
+Subject/session split logic & Yes & Implemented in the feature-extraction notebook; raw paths are external.\\
+Raw ECG filtering and R-peak detection & No & Raw waveform files are not included; notebooks point to Kaggle paths.\\
+Raw respiratory cycle extraction & No & Raw breathing recordings are not included.\\
+ECG model and fusion stage & Partly & Features and notebook code are present; exact package versions are not pinned.\\
+Exact numerical rerun & Not guaranteed & Hardware, library versions, random-state coverage, and source-data version are undocumented.\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Threats to validity}
+\subsection{Internal validity}
+The absence of subject overlap between train and test is a major strength. However, threshold optimization and fusion-weight selection can still introduce optimism if the same small development sample is repeatedly used for model decisions. The notebooks also contain more than one experimental pathway, including alternative ECG thresholds and respiratory thresholding schemes. A final manuscript should clearly identify one primary analysis and label all other analyses as secondary or exploratory.
+
+\subsection{Statistical conclusion validity}
+The test set has only 26 sessions and 10 diabetic sessions. For example, the fused sensitivity of $7/10=70\%$ has substantial binomial uncertainty before accounting for subject clustering. Confidence intervals should be computed at the subject level, preferably with a bootstrap that resamples subjects rather than sessions. Comparing accuracies alone is insufficient; paired subject-level predictions, confidence intervals, calibration, and clinically relevant operating points should be reported.
+
+\subsection{External validity}
+The experiment uses a narrow cohort and an externally hosted dataset. The README and notebooks do not provide enough demographic, acquisition-condition, medication, disease-duration, or comorbidity information to assess representativeness. Performance may therefore change under different sensors, recording durations, activity states, age distributions, or diabetes subtypes. The term ``non-invasive detection'' should be interpreted as a research screening hypothesis, not evidence that the system can replace glucose-based diagnosis.
+
+\subsection{Construct validity and signal quality}
+The model uses autonomic proxies rather than a direct biochemical measurement. Abnormal RR intervals can arise from motion, ectopic beats, poor electrode contact, or peak-detection errors, while respiratory features can be affected by posture, effort, and sensor placement. The very large RR variability values visible in some exported rows reinforce the need for explicit physiological plausibility limits and a signal-quality index. Each future prediction should include a quality flag and an abstention option when the input signal is unreliable.
+
 \section{Discussion}
 The repository demonstrates a coherent multimodal machine-learning workflow. Its strongest methodological feature is the subject-aware split performed after ECG--respiration matching and before model fitting. The late-fusion design also provides an interpretable way to trade off complementary modality scores. The reported fused AUC of 0.7437 and specificity of 87.5\% suggest that respiratory information contributes useful discrimination in this experiment, while the low learned ECG weight ($\alpha=0.10$) indicates that respiration dominated the selected score combination.
 
