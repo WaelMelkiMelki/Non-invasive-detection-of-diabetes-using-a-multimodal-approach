@@ -1,0 +1,189 @@
+% Academic report generated from the complete repository inspection.
+% Compile with: pdflatex report.tex (twice for stable references)
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs,longtable,array}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{siunitx}
+
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!60!black,citecolor=blue!50!black}
+\sisetup{detect-all,round-mode=places,round-precision=3}
+\setlist{nosep}
+\newcommand{\repo}{\texttt{Non-invasive-detection-of-diabetes-using-a-multimodal-approach}}
+\newcommand{\eg}{e.g.\@}
+
+\title{Non-Invasive Detection of Type 1 Diabetes\ Using ECG and Respiratory Signals: An Academic Report}
+\author{Wael Melki \and Youssef Chaari\\[0.25em]\small Supervisor: Sofia Ben Jebara\\\small Sup'Com, University of Carthage}
+\date{Academic year 2025--2026\\[0.4em]\small Repository audit: 18 September 2026}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+This report documents and evaluates the contents of the repository \repo. The project investigates subject-level classification of type 1 diabetes from two non-invasive physiological modalities: electrocardiography (ECG) and respiration. The implementation pairs sessions by subject and timestamp, extracts heart-rate-variability and respiratory features, trains modality-specific classifiers, and combines their posterior scores by late fusion. The stored notebook outputs report an accuracy of 0.8077 and ROC--AUC of 0.7437 for the fused system on a 26-session held-out test set. The report distinguishes reproducible evidence contained in the repository from claims that require rerunning the notebooks against the external DINAMO/Kaggle raw data, and highlights important limitations: only 20 subjects are represented in the executed pairing pipeline, the test set contains four subjects, and the outputs are therefore exploratory rather than clinically validated.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+Diabetes mellitus is conventionally diagnosed using biochemical measurements such as fasting plasma glucose, oral glucose tolerance testing, or glycated haemoglobin. These measurements are clinically established, but repeated sampling is invasive and does not directly capture autonomic physiological regulation. The repository studies whether changes in autonomic control can be detected from ECG and respiratory recordings, with the intended application being non-invasive screening support rather than replacement of a clinical diagnosis.
+
+The central research question is:
+\begin{quote}
+Can subject-independent fusion of ECG-derived heart-rate-variability descriptors and respiration-derived temporal, amplitude, and spectral descriptors discriminate participants with type 1 diabetes from healthy participants?
+\end{quote}
+
+The repository identifies the underlying data as the DINAMO ECG and glucose dataset. Its README describes 29 subjects (20 healthy and 9 diabetic); however, the executed pairing notebook reports 20 subjects, 126 paired sessions, and a 16/4 subject train/test split. This report uses the latter figures when describing the implemented experiment and treats the larger README description as dataset-level context rather than as the effective sample size of the stored experiment.
+
+\section{Repository audit and research artefacts}
+All files present at the time of inspection were reviewed. The repository contains four CSV feature tables, four Jupyter notebooks, a README, and an MIT license. Raw ECG and respiratory waveforms are not included; the notebooks refer to external paths such as \texttt{/kaggle/input/...}. Consequently, the report can audit the feature tables and saved notebook code/output, but cannot independently regenerate raw-signal preprocessing in this checkout without obtaining the external dataset.
+
+\begin{longtable}{p{0.27\textwidth}p{0.63\textwidth}}
+\caption{Complete repository inventory.}\label{tab:inventory}\\
+\toprule
+\textbf{Artefact} & \textbf{Role and audited contents}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Artefact} & \textbf{Role and audited contents}\\
+\midrule
+\endhead
+\texttt{README.md} & Project motivation, dataset context, pipeline description, reported metrics, installation notes, and references.\\
+\texttt{feature extraction.ipynb} & Session discovery, subject/session matching, subject-aware split, ECG feature extraction, respiratory feature extraction, and CSV export.\\
+\texttt{tutoré ECG.ipynb} & ECG preprocessing, simplified Pan--Tompkins-style R-peak detection, HRV features, SVM tuning, thresholding, permutation importance, and ablation.\\
+\texttt{tutoré breathing.ipynb} & Respiratory normalization, Random Forest training, leave-one-out threshold selection, and held-out evaluation.\\
+\texttt{fusion.ipynb} & ECG and respiratory model training, out-of-fold probability combination, grid search for $\alpha$, and fused evaluation.\\
+\texttt{df\_ecg\_train.csv} & 100 training rows, four ECG features, identifiers, labels, and ECG file paths.\\
+\texttt{df\_ecg\_test.csv} & 26 test rows, four ECG features, identifiers, labels, file paths, and stored ECG probabilities.\\
+\texttt{features\_train\_df.csv} & 100 training rows and 18 respiratory features plus identifiers/labels.\\
+\texttt{features\_test\_df.csv} & 26 test rows and 18 respiratory features plus identifiers/labels.\\
+\texttt{LICENSE} & MIT license, copyright 2026.\\
+\bottomrule
+\end{longtable}
+
+\section{Data construction and leakage control}
+The feature-extraction notebook first builds separate inventories of ECG and breathing sessions. Subject identifiers are parsed from directory names, including the special diabetes naming convention \texttt{012\_diabetes}; session identifiers are parsed from the sensor-data directory. Sessions are then joined on subject and session/date before any feature computation. This order is methodologically appropriate because it preserves the correspondence between modalities.
+
+The executed notebook reports 131 ECG sessions and 126 breathing sessions across 20 subjects. The join produced 126 paired sessions, no label conflicts, five unmatched ECG sessions, and no unmatched breathing sessions. The resulting data were divided using \texttt{GroupShuffleSplit}, with test size 0.20 and random state 42. Sixteen subjects contributed to training and four subjects to testing; the reported subject overlap was empty. The pair-level counts were 100 training sessions (63 healthy, 37 diabetic) and 26 test sessions (16 healthy, 10 diabetic).
+
+This design prevents the most direct form of leakage in which sessions from one person appear in both partitions. Nevertheless, the small number of held-out subjects means that uncertainty is dominated by between-subject variation. Session-level metrics should not be interpreted as independent-patient performance estimates.
+
+\section{Feature extraction}
+\subsection{ECG modality}
+The ECG pipeline uses a sampling frequency of 250\,Hz and a Butterworth band-pass filter with passband 0.5--50\,Hz. R peaks are detected by a simplified Pan--Tompkins-style sequence involving differentiation, squaring, and moving-window averaging. For each session, four features are retained:
+\begin{enumerate}
+  \item mean RR interval ($\texttt{mean\_rr}$);
+  \item standard deviation of RR intervals ($\texttt{std\_rr}$, related to SDNN);
+  \item root mean square of successive RR differences ($\texttt{rmssd}$);
+  \item mean heart rate ($\texttt{mean\_hr}$).
+\end{enumerate}
+The ECG notebook additionally reports a permutation-importance ranking led by \texttt{std\_rr}, followed by \texttt{rmssd}, \texttt{mean\_hr}, and \texttt{mean\_rr}. Its incremental ablation output reports test AUC values of 0.7687 using the most important feature alone, 0.7687 using two features, 0.8375 using three features, and 0.8250 using all four. These figures are exploratory because they are calculated on the same small held-out set.
+
+\subsection{Respiratory modality}
+The respiratory signal is sampled at 18\,Hz and filtered with a fourth-order Butterworth band-pass filter from 0.05 to 0.7\,Hz. Inspiratory peaks and expiratory troughs are used to derive cycle descriptors. The 18 retained features are grouped as follows:
+\begin{itemize}
+  \item temporal: $\texttt{BR\_mean}$, $\texttt{BR\_std}$, RMSSD, SDNN, coefficient of variation, mean and standard deviation of inspiratory and expiratory durations, and the inspiratory/expiratory ratio;
+  \item amplitude: mean and standard deviation of amplitude;
+  \item spectral: dominant frequency, low/medium/high-band power, spectral entropy, and spectral centroid.
+\end{itemize}
+The breathing model applies a Min--Max transformation fitted on training data only. The fusion notebook reports a Random Forest with 1,000 trees, class-balanced subsampling, and person-level sample weighting. The respiratory notebook uses leave-one-out predictions on the training data to select a threshold by balanced accuracy.
+
+\section{Classifiers and late fusion}
+For ECG, the fusion notebook performs GroupKFold hyperparameter tuning for an RBF-kernel support-vector machine. The selected configuration is $C=100$, $\gamma=\text{scale}$, and balanced class weights. The best cross-validated AUC is reported as 0.7228; the ECG out-of-fold and test AUC values are 0.6890 and 0.6875, respectively.
+
+For respiration, the stored fusion output reports a Random Forest threshold of 0.48 selected using leave-one-out cross-validation. The late-fusion rule is:
+\begin{equation}
+  p_{\mathrm{fused}} = \alpha p_{\mathrm{ECG}} + (1-\alpha)p_{\mathrm{resp}},
+  \qquad 0\leq\alpha\leq 1.
+\end{equation}
+The grid search uses out-of-fold training probabilities and selects $\alpha=0.10$ according to the notebook's stated objective. Thus, the final score gives substantially greater weight to respiration than to ECG. This is a score-level fusion strategy, not an early concatenation of raw or engineered features.
+
+\section{Results}
+The primary results below are transcribed from the executed \texttt{fusion.ipynb} outputs. The test set contains 26 paired sessions from four previously unseen subjects.
+
+\begin{table}[H]
+\centering
+\caption{Held-out test performance reported by the repository. Percentages are converted from the notebook's decimal outputs.}
+\label{tab:results}
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{System} & \textbf{Accuracy} & \textbf{Balanced acc.} & \textbf{Precision} & \textbf{Recall} & \textbf{Specificity} & \textbf{AUC}\\
+\midrule
+ECG/SVM & 73.08\% & -- & 62.00\% & 80.00\% & 69.00\% & 0.6875\\
+Respiration/RF & 76.92\% & 75.62\% & 70.00\% & 70.00\% & 81.25\% & --\\
+Late fusion & \textbf{80.77\%} & -- & 77.78\% & 70.00\% & \textbf{87.50\%} & \textbf{0.7437}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The fused confusion matrix is
+\[
+\begin{pmatrix}
+14 & 2\\
+3 & 7
+\end{pmatrix},
+\]
+where rows are true healthy/diabetic classes and columns are predicted healthy/diabetic classes. Therefore, 14 of 16 healthy sessions and 7 of 10 diabetic sessions were correctly classified. The fusion system improves accuracy over the respiratory-only and ECG-only figures and improves specificity over both modality-specific systems. Its sensitivity is equal to the respiratory model's reported sensitivity and lower than the ECG model's thresholded sensitivity.
+
+The separate ECG notebook reports an alternative threshold analysis: a Youden threshold of 0.1919 gives 100\% diabetes recall and 56\% healthy recall on the same 26-session test partition, with overall accuracy 73\%. This illustrates that the operating threshold materially changes the clinical trade-off; threshold choice must therefore be fixed using an explicitly pre-registered objective and validated independently.
+
+\section{Discussion}
+The repository demonstrates a coherent multimodal machine-learning workflow. Its strongest methodological feature is the subject-aware split performed after ECG--respiration matching and before model fitting. The late-fusion design also provides an interpretable way to trade off complementary modality scores. The reported fused AUC of 0.7437 and specificity of 87.5\% suggest that respiratory information contributes useful discrimination in this experiment, while the low learned ECG weight ($\alpha=0.10$) indicates that respiration dominated the selected score combination.
+
+Several observations temper this interpretation. First, the effective experiment is small: 20 subjects, four test subjects, and only 10 diabetic test sessions. A change of one test decision changes accuracy by approximately 3.85 percentage points. Second, the data are repeated sessions, so a session-level confidence interval would overstate evidence if it ignored clustering by subject. Third, the model's threshold and fusion coefficient are data-dependent; selecting them from the same limited development data can produce optimistic results. Fourth, the repository does not include raw signals, a pinned dependency environment, a formal data card, or a machine-readable record of the exact train/test subject identifiers. Fifth, one ECG notebook output contains implausibly large RR-variability values for some sessions (for example, tens of thousands of milliseconds), which should be investigated as possible peak-detection artefacts or signal-quality problems before clinical interpretation.
+
+The observed results should consequently be described as proof-of-concept evidence of feasibility, not as diagnostic accuracy. In particular, the classifier predicts a dataset label associated with diabetes status; it does not measure glucose and cannot establish or exclude disease in an individual.
+
+\section{Reproducibility protocol}
+A researcher wishing to reproduce the stored experiment should:
+\begin{enumerate}
+  \item obtain the external DINAMO/Kaggle raw data and recreate the paths expected by \texttt{feature extraction.ipynb};
+  \item install the scientific Python stack listed in the README (NumPy, pandas, SciPy, scikit-learn, Matplotlib, seaborn, and optional CuPy/joblib/tqdm);
+  \item execute \texttt{feature extraction.ipynb} first, verifying 126 paired sessions, 16 training subjects, four test subjects, and no subject overlap;
+  \item execute the ECG and respiratory notebooks, checking that feature column order and labels match the exported CSV files;
+  \item execute \texttt{fusion.ipynb}, recording the selected hyperparameters, thresholds, $\alpha$, confusion matrix, and AUC;
+  \item report patient-level confidence intervals and repeat the analysis under multiple subject-level splits or nested cross-validation.
+\end{enumerate}
+The current repository's CSV files are sufficient to reproduce the classifier/fusion stage in principle, but not the raw waveform-to-feature stage. Because no requirements file is present, exact library versions and hardware settings should also be recorded in a future release.
+
+\section{Limitations and future work}
+The next version should address the following priorities:
+\begin{itemize}
+  \item validate on a larger, prospectively collected, independent cohort with substantially more diabetic subjects;
+  \item use repeated nested group cross-validation or leave-one-subject-out evaluation, with bootstrap intervals clustered by subject;
+  \item audit R-peak and respiratory-cycle quality, reject or repair physiologically implausible intervals, and document missing/error cases;
+  \item preregister the operating point according to the intended use (screening sensitivity versus confirmatory specificity);
+  \item compare score fusion with calibrated probabilities, feature-level fusion, and models that include signal-quality covariates;
+  \item provide a locked environment, raw-data access instructions, subject manifests, preprocessing unit tests, and a data dictionary;
+  \item evaluate calibration, decision-curve utility, subgroup robustness, and performance under realistic class prevalence before considering clinical deployment.
+\end{itemize}
+
+\section{Conclusion}
+The audited repository implements a subject-aware, non-invasive multimodal classification pipeline using ECG HRV and respiratory features. Its stored experiment reports that late fusion reaches 80.77\% accuracy and 0.7437 AUC on 26 held-out sessions from four subjects, outperforming either individual modality on accuracy and specificity. These findings support further investigation of autonomic physiological signals for diabetes-related screening, but the limited cohort, external raw-data dependency, threshold selection, and exploratory evaluation prevent clinical conclusions. The appropriate next step is rigorous subject-level external validation with transparent uncertainty estimates and signal-quality controls.
+
+\begin{thebibliography}{9}
+\bibitem{repo}
+W. Melki and Y. Chaari, \emph{Non-Invasive Detection of Diabetes Using a Multimodal Approach}, Git repository audited 18 September 2026, MIT License.
+
+\bibitem{dinamo}
+DINAMO, \emph{ECG and Glucose Dataset}, external dataset referenced by the repository README and notebooks, Kaggle distribution.
+
+\bibitem{pan}
+J. Pan and W. J. Tompkins, ``A real-time QRS detection algorithm,'' \emph{IEEE Transactions on Biomedical Engineering}, vol. BME-32, no. 3, pp. 230--236, 1985.
+
+\bibitem{sklearn}
+F. Pedregosa et al., ``Scikit-learn: Machine learning in Python,'' \emph{Journal of Machine Learning Research}, vol. 12, pp. 2825--2830, 2011.
+\end{thebibliography}
+
+\end{document}
